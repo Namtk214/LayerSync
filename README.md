@@ -109,7 +109,7 @@ To use LayerSync in your own project, follow this reference line and synchronize
 ## 🧭 To-Do
 * [x] Release checkpoints
 * [ ] Add audio scripts
-* [ ] Add representation evaluation scripts
+* [x] Add representation evaluation scripts
 
 ---
 
