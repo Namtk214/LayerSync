@@ -238,23 +238,28 @@ class SiT(nn.Module):
         t: (N,) tensor of diffusion timesteps
         y: (N,) tensor of class labels
         """
-        intermediate_activations = {}   
+        # skip_blocks: set of 0-indexed block indices to skip during inference
+        skip_blocks = getattr(self, 'skip_blocks', set())
+        intermediate_activations = {}
+        zs = gt_zs = None
         x = self.x_embedder(x) + self.pos_embed  # (N, T, D), where T = H * W / patch_size ** 2
         t = self.t_embedder(t)                   # (N, D)
         y = self.y_embedder(y, self.training)    # (N, D)
         c = t + y                                # (N, D)
-        
 
         for i, block in enumerate(self.blocks):
+            if i in skip_blocks:
+                intermediate_activations[i] = x
+                continue
 
             x = block(x, c) # (N, T, D)
-        
+
             if (i + 1) == self.encoder_depth:
                 zs = x
             if (i + 1) == self.gt_encoder_depth:
                 gt_zs = x
             intermediate_activations[i] = x
- 
+
         x = self.final_layer(x, c)                # (N, T, patch_size ** 2 * out_channels)
         x = self.unpatchify(x)                   # (N, out_channels, H, W)
         if self.learn_sigma:

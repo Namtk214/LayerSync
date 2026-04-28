@@ -28,7 +28,9 @@ Yasaman Haghighi\*, Bastien van Delft\*, Mariam Hassan, Alexandre Alahi
 
 ## 🗞️ News
 
+- **[Apr 2025]** Added block dropping support for inference (`--skip-blocks-range`). See [Evaluation](#-evaluation) for details.
 - **[Jan 2025]** Added fine-tuning with LoRA support! Check out the [Finetuning-LoRA](./Finetuning-LoRA) folder.
+
 ---
 
 ## 🛠️ Setup
@@ -64,10 +66,17 @@ We provide pretrained model checkpoints on Hugging Face:
 👉 [LayerSync Checkpoints](https://huggingface.co/Yassaman/LayerSync/tree/main)
 
 Available checkpoints:
-- **Final checkpoint**: Trained model after 800 epochs
-- **Representation evaluation checkpoint**: Model checkpoint used for representation quality evaluation
+- **`checkpoint.pt`**: Final model trained for 800 epochs (`encoder_depth=8`, `gt_encoder_depth=16`, batch size 1024, 4 nodes)
+- **`representation.pt`**: Checkpoint used for representation quality evaluation
 
-To use a checkpoint, download it from the repository and load it during evaluation or inference.
+Download via Python:
+
+```python
+from huggingface_hub import hf_hub_download
+
+hf_hub_download(repo_id="Yassaman/LayerSync", filename="checkpoint.pt", local_dir="./")
+hf_hub_download(repo_id="Yassaman/LayerSync", filename="representation.pt", local_dir="./")
+```
 
 ---
 
@@ -88,12 +97,63 @@ torchrun --nnodes=1 --nproc_per_node=N train.py \
 
 ## 🧩 Evaluation
 
-You can generate images (and the resulting `.npz` file can be used for ADM evaluation suite) using:
+### FID Sampling
+
+Generate images and save as `.npz` for the [ADM evaluation suite](https://github.com/openai/guided-diffusion/tree/main/evaluations):
 
 ```bash
 torchrun --nnodes=1 --nproc_per_node=N sample_ddp.py ODE \
   --model SiT-XL/2 \
-  --num-fid-samples 50000
+  --ckpt checkpoint.pt \
+  --num-fid-samples 50000 \
+  --cfg-scale 4.0
+```
+
+### Block Dropping (Inference Speed vs. Quality)
+
+Use `--skip-blocks-range START END` to skip a contiguous range of transformer blocks during inference (1-indexed, inclusive). This reduces compute at the cost of some generation quality. Results are saved to a separate folder suffixed with the dropped range.
+
+```bash
+# Drop blocks 9–15 (7/28 blocks skipped)
+torchrun --nnodes=1 --nproc_per_node=N sample_ddp.py ODE \
+  --model SiT-XL/2 \
+  --ckpt checkpoint.pt \
+  --num-fid-samples 50000 \
+  --cfg-scale 4.0 \
+  --skip-blocks-range 9 15
+
+# Drop blocks 9–21 (13/28 blocks skipped)
+torchrun --nnodes=1 --nproc_per_node=N sample_ddp.py ODE \
+  --model SiT-XL/2 \
+  --ckpt checkpoint.pt \
+  --num-fid-samples 50000 \
+  --cfg-scale 4.0 \
+  --skip-blocks-range 9 21
+```
+
+> **Note:** The model was not trained with block dropping. Middle blocks (roughly 9–20) tend to be the most redundant, but dropping a large fraction will noticeably reduce image quality.
+
+### Representation Quality Evaluation
+
+Evaluate per-layer representation quality via linear segmentation probe on PASCAL VOC:
+
+```bash
+python evaluation/evaluate_segmentation.py \
+  --model SiT-XL/2 \
+  --ckpt representation.pt \
+  --image-size 256 \
+  --epochs 25
+```
+
+Measure alignment between SiT layers and a pretrained encoder (DINOv2, MAE):
+
+```bash
+python evaluation/similarity_to_pretrained_encoders.py \
+  --sit_checkpoint representation.pt \
+  --encoder dinov2_vitb14 \
+  --n_images 1000 \
+  --encoder_final_only \
+  --metrics cka mutual_knn cycle_knn
 ```
 
 ---
@@ -108,8 +168,9 @@ To use LayerSync in your own project, follow this reference line and synchronize
 
 ## 🧭 To-Do
 * [x] Release checkpoints
-* [ ] Add audio scripts
 * [x] Add representation evaluation scripts
+* [x] Add block dropping support for inference
+* [ ] Add audio scripts
 
 ---
 

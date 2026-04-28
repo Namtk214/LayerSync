@@ -82,6 +82,17 @@ def main(mode, args):
     state_dict = find_model(ckpt_path)
     model.load_state_dict(state_dict)
     model.eval()  # important!
+
+    # Block dropping: --skip-blocks-range START END (1-indexed, inclusive)
+    # Internally stored as 0-indexed set, e.g. "9 15" → {8,9,10,11,12,13,14}
+    if args.skip_blocks_range is not None:
+        start, end = args.skip_blocks_range
+        assert 1 <= start <= end <= len(model.blocks), \
+            f"--skip-blocks-range must be in [1, {len(model.blocks)}]"
+        model.skip_blocks = set(range(start - 1, end))
+        if rank == 0:
+            print(f"Dropping blocks {start}–{end} (0-indexed: {sorted(model.skip_blocks)}), "
+                  f"{len(model.skip_blocks)}/{len(model.blocks)} blocks skipped.")
     
     
     transport = create_transport(
@@ -125,15 +136,17 @@ def main(mode, args):
     # Create folder to save samples:
     model_string_name = args.model.replace("/", "-")
     ckpt_string_name = os.path.basename(args.ckpt).replace(".pt", "") if args.ckpt else "pretrained"
+    skip_suffix = f"-skip{args.skip_blocks_range[0]}-{args.skip_blocks_range[1]}" \
+                  if args.skip_blocks_range is not None else ""
     if mode == "ODE":
         folder_name = f"{model_string_name}-{ckpt_string_name}-" \
                   f"cfg-{args.cfg_scale}-{args.per_proc_batch_size}-"\
-                  f"{mode}-{args.num_sampling_steps}-{args.sampling_method}"
+                  f"{mode}-{args.num_sampling_steps}-{args.sampling_method}{skip_suffix}"
     elif mode == "SDE":
         folder_name = f"{model_string_name}-{ckpt_string_name}-" \
                     f"cfg-{args.cfg_scale}-{args.per_proc_batch_size}-"\
                     f"{mode}-{args.num_sampling_steps}-{args.sampling_method}-"\
-                    f"{args.diffusion_form}-{args.last_step}-{args.last_step_size}"
+                    f"{args.diffusion_form}-{args.last_step}-{args.last_step_size}{skip_suffix}"
     sample_folder_dir = f"{args.sample_dir}/{folder_name}"
     if rank == 0:
         os.makedirs(sample_folder_dir, exist_ok=True)
@@ -223,6 +236,10 @@ if __name__ == "__main__":
                         help="By default, use TF32 matmuls. This massively accelerates sampling on Ampere GPUs.")
     parser.add_argument("--ckpt", type=str, default=None,
                         help="path to a SiT checkpoint (default: auto-download a pre-trained SiT-XL/2 model).")
+    parser.add_argument("--skip-blocks-range", type=int, nargs=2, default=None,
+                        metavar=("START", "END"),
+                        help="Drop transformer blocks [START, END] during inference (1-indexed, inclusive). "
+                             "E.g. --skip-blocks-range 9 15")
 
     parse_transport_args(parser)
     if mode == "ODE":
